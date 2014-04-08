@@ -4,6 +4,8 @@ This is a heatmap generator for Cassandra.
 
 Currently only records the last 500 seconds of histogram data for the Keyspace1.Standard1 write values.
 
+![Screen Shot](share/screen-sample.png)
+
 ## How to run
 
 * Set your GOPATH as appropriate.
