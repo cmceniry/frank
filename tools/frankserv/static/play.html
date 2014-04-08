@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<html>
+  <head>
+    <style>
+      rect.bordered {
+        stroke: #E6E6E6;
+        stroke-width:0px;   
+      }
+
+      text.mono {
+        font-size: 9pt;
+        font-family: Consolas, courier;
+        fill: #aaa;
+      }
+
+      text.axis-workweek {
+        fill: #000;
+      }
+
+      text.axis-worktime {
+        fill: #000;
+      }
+    </style>
+    <script src="http://d3js.org/d3.v3.min.js"></script>
+    <!-- <script src="d3.v3.js"></script> -->
+    <script src="http://labratrevenge.com/d3-tip/javascripts/d3.tip.v0.6.3.js"></script>
+    <script src="labels.js"></script>
+  </head>
+  <body>
+    <div id="chart"></div>
+
+    <script type="text/javascript">
+      var margin = { top: 100, right: 0, bottom: 100, left: 65 },
+          width = 960 - margin.left - margin.right,
+          height = 430 + 400 - margin.top - margin.bottom,
+          gridSize = Math.floor(width / 24),
+          cellWidth = Math.floor(width / 110),
+          cellHeight = Math.floor(height / 91),
+          legendElementWidth = gridSize*2;
+      var colors = ["#ffffff", "#ffffcc","#ffeda0","#fed976","#feb24c","#fd8d3c","#fc4e2a","#e31a1c","#bd0026","#800026"];
+      var format = d3.time.format("%H:%M:%S");
+
+
+      var tip = d3.tip()
+        .attr('class', 'd3-tip')
+        .offset([-10,0])
+        .html(function(d) {
+          return "<srong>" + Math.round(d.value) + "</strong><br/>" +
+            "<strong>" + d.bin + "</strong><br/>" + 
+            "<strong>" + format(new Date(d.TimestampMS)) + "</strong>";
+        });
+
+      var svg = d3.select("#chart").append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+      svg.call(tip);
+
+      d3.json("/align/localhost/Keyspace1/Standard1",
+        function(error, data) {
+          if (error) return console.log("error", error);
+
+          var colorScale = d3.scale.quantile()
+            //.domain([0, buckets - 1, d3.max(data, function (d) { return d3.max(d.Data, function (e) { return e.value; }); }) ])
+            .domain([0, 1, 1000, 2000, 4000, 5000, 6000, 7000, 8000, 9000])
+            .range(colors);
+
+          var binLabels = svg.selectAll(".binLabel")
+            .data(Labels)
+            .enter()
+              .append("text")
+              .text(function (d) { return d; })
+              .attr("x", 0)
+              .attr("y", function (d, i) { return i * cellHeight; })
+              .style("text-anchor", "end")
+              .style("display", function (d, i) { return (i % 5 == 0 ? "normal" : "none"); })
+              .attr("transform", "translate(-6,0)")
+              .attr("class", function (d, i) { return "dayLabel mono axis axis-workweek"; });
+
+          var times = [];
+          var processed = [];
+          data.forEach(function (row, i) {
+            times.push(new Date(row.TimestampMS));
+            row.Data.forEach(function (val, j) {
+              processed.push({"TimestampMS": row.TimestampMS, "row": j, "col": i, "value": val, "bin": Labels[j]})
+            });
+          });
+          var heatMapColumn = svg.append("g").attr("class", "da")
+            .selectAll(".cell").data(processed).enter()
+            .append("rect")
+            .attr("x", function(d) { return d.col*cellWidth; })
+            .attr("y", function(d, i) { return d.row*cellHeight; })
+            .attr("class", "hour bordered")
+            .attr("width", cellWidth)
+            .attr("height", cellHeight)
+            .style("fill", function(d) { return colorScale(d.value); })
+            .on("mouseover", tip.show)
+            .on("mouseout", tip.hide)
+  
+          var timeLabels = svg.selectAll(".timeLabel")
+              .data(times)
+              .enter().append("text")
+                .text(function(d) { return format(d); })
+                .attr("x", function(d, i) { return i * cellWidth; })
+                .attr("y", 0)
+                .style("text-anchor", "left")
+              .style("display", function (d, i) { return (i % 5 == 0 ? "normal" : "none"); })
+                .attr("transform", function(d, i) { return "translate(0, -6) rotate(-90 " + i*cellWidth + " 0)"; })
+                .attr("class", function(d, i) { return "timeLabel mono axis axis-workweek"; });
+
+        }
+      );
+
+    </script>
+  </body>
+</html>
