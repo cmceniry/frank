@@ -3,15 +3,27 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"github.com/cmceniry/frank"
 	"github.com/cmceniry/golokia"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
 )
+
+type MyConfig struct {
+	Host		string
+	Port		int
+	Keyspace	string
+	ColumnFamily	string
+	Operation	string
+}
+
+var config = MyConfig{}
 
 type int64Slice []int64
 func (p int64Slice) Len() int           { return len(p) }
@@ -57,7 +69,7 @@ func getHistogram(ks, cf, field string) ([]float64, error) {
 
 func collector(sink chan []float64) {
 	for {
-		if res, err := getHistogram("Keyspace1", "Standard1", "LifetimeWriteLatencyHistogramMicros"); err != nil {
+		if res, err := getHistogram(config.Keyspace, config.ColumnFamily, config.Operation); err != nil {
 			fmt.Printf("Error: %s\n", err)
 		} else {
 			sink <- res
@@ -128,7 +140,11 @@ func rawHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	if path[1] != "localhost" && path[2] != "Keyspace1" && path[3] != "Standard1" {
+	if path[1] != "localhost" && path[2] != config.Keyspace && path[3] != config.ColumnFamily {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if path[4] != config.Operation {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -167,7 +183,11 @@ func alignHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	if path[1] != "localhost" && path[2] != "Keyspace1" && path[3] != "Standard1" {
+	if path[1] != "localhost" && path[2] != config.Keyspace && path[3] != config.ColumnFamily {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if path[4] != config.Operation {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -197,6 +217,24 @@ func alignHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	var op string
+	flag.StringVar(&config.Host, "host", "localhost", "Jolokia Host to connect to")
+	flag.IntVar(&config.Port, "port", 7025, "Jolokia Port to connect to")
+	flag.StringVar(&config.Keyspace, "keyspace", "Keyspace1", "Keyspace to connect to")
+	flag.StringVar(&config.ColumnFamily, "cf", "Standard1", "ColumnFamily to get metrics for")
+	flag.StringVar(&op, "op", "Write", "Type of operation to get metrics for: Read or Write")
+	flag.Parse()
+
+	switch op {
+	case "Write":
+		config.Operation = "LifetimeWriteLatencyHistogramMicros"
+	case "Read":
+		config.Operation = "LifetimeReadLatencyHistogramMicros"
+	default:
+		fmt.Println("Operation must be Read or Write")
+		os.Exit(-1)
+	}
+
 	stream := make(chan []float64)
 	go collector(stream)
 	go storer(stream)
@@ -204,6 +242,10 @@ func main() {
 	http.HandleFunc("/raw/", rawHandler)
 	http.HandleFunc("/align/", alignHandler)
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/static/play.html#/" + config.Host + "/" + config.Keyspace + "/" + config.ColumnFamily + "/" + config.Operation, http.StatusFound)
+		return
+	})
 	http.ListenAndServe(":4270", nil)
 
 	for {

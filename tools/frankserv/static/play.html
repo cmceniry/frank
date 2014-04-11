@@ -59,7 +59,7 @@
 
       svg.call(tip);
 
-      d3.json("/align/localhost/Keyspace1/Standard1",
+      d3.json("/align/" + window.location.hash.substring(2,window.location.hash.length),
         function(error, data) {
           if (error) return console.log("error", error);
 
