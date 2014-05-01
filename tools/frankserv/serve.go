@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/gob"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/cmceniry/frank"
 	"github.com/cmceniry/golokia"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -67,27 +69,51 @@ func getHistogram(ks, cf, field string) ([]float64, error) {
 	return ret, nil
 }
 
-func collector(sink chan []float64) {
+func listener(sink chan frank.NamedSample) {
 	for {
-		if res, err := getHistogram(config.Keyspace, config.ColumnFamily, config.Operation); err != nil {
-			fmt.Printf("Error: %s\n", err)
-		} else {
-			sink <- res
+		ln, err := net.Listen("tcp", ":4271")
+		if err != nil {
+			fmt.Printf("Error starting listener: %s\n", err)
+			time.Sleep(5 * time.Second)
+			break
 		}
-		time.Sleep(2 * time.Second)
+		defer ln.Close()
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				fmt.Printf("Error accepting a connection: %s\n", err)
+				continue
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				var (
+					res frank.NamedSample
+					err error
+				)
+				dec := gob.NewDecoder(c)
+				for {
+					err = dec.Decode(&res)
+					if err != nil {
+						fmt.Printf("Error receiving %s\n", err)
+						break
+					}
+					sink <- res
+				}
+			}(conn)
+		}
 	}
 }
 
 // Periodically sweeps out older values
 // The second value is the number of entries to try to keep this to
-func cleanup(data map[int64][]float64, length int) {
+func cleanup(data *frank.Meter, length int) {
 	for {
 		time.Sleep(20 * time.Second)
 		//fmt.Printf("Running cleanup\n")
-		if len(data) > length {
-			keys := make(int64Slice, len(data)+2)
+		if len(data.Data) > length {
+			keys := make(int64Slice, len(data.Data)+2)
 			count := 0
-			for k, _ := range data {
+			for k, _ := range data.Data {
 				keys[count] = k
 				count = count + 1
 			}
@@ -97,7 +123,7 @@ func cleanup(data map[int64][]float64, length int) {
 			//fmt.Printf("%s\n", keys)
 			//fmt.Printf("%s\n", len(data))
 			for i := 0; i<len(keys)-length; i++ {
-				delete(data, keys[i])
+				delete(data.Data, keys[i])
 			}
 			//fmt.Printf("%s\n", len(data))
 		}
@@ -106,23 +132,31 @@ func cleanup(data map[int64][]float64, length int) {
 }
 
 var (
-	d = make(map[int64][]float64)
+	d = make(map[string]*frank.Meter)
 )
 
-func storer(source chan []float64) {
-	go cleanup(d, 500)
+func storer(source chan frank.NamedSample) {
 	for {
 		chunk := <- source
-		//fmt.Printf("%v\n", chunk)
-		d[time.Now().UnixNano()/1000000] = chunk
-		//fmt.Printf("Current size: %d\n", len(d))
+		fmt.Printf("Received %v\n", chunk)
+		if _, ok := d[chunk.Name]; !ok {
+			d[chunk.Name] = &frank.Meter{chunk.Name, make(map[int64]frank.Sample, 10)}
+			go cleanup(d[chunk.Name], 500)
+		}
+		d[chunk.Name].Data[chunk.Sample.TimestampMS] = frank.Sample{chunk.Sample.TimestampMS, make([]float64, len(chunk.Sample.Data))}
+		for k, v := range chunk.Sample.Data {
+			d[chunk.Name].Data[chunk.Sample.TimestampMS].Data[k] = v
+		}
+		for k, v := range d[chunk.Name].Data {
+			fmt.Printf("s: %d %d\n", k, v.Data[10])
+		}
 	}
 }
 
-func printer(source chan []float64) {
+func printer(source chan frank.NamedSample) {
 	for {
 		data := <- source
-		fmt.Printf("%s : %v\n", time.Now(), data)
+		fmt.Printf("%s : %v\n", time.Unix(data.TimestampMS/1e3, 0).Format("00:00:00"), data.Data)
 	}
 }
 
@@ -140,24 +174,22 @@ func rawHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	if path[1] != "localhost" && path[2] != config.Keyspace && path[3] != config.ColumnFamily {
+	name := path[1] + "/" + path[2] + "/" + path[3] + "/" + path[4]
+	m, ok := d[name]
+	if !ok {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	if path[4] != config.Operation {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	dts := make(int64Slice, len(d))
+	dts := make(int64Slice, len(m.Data))
 	count := 0
-	for ts, _ := range d {
+	for ts, _ := range m.Data {
 		dts[count] = ts
 		count = count + 1
 	}
 	sort.Sort(dts)
 	dstr := make([]MyResp, len(dts))
 	for x := range dts {
-		dstr[x] = MyResp{fmt.Sprintf("%d", dts[x]),d[dts[x]]}
+		dstr[x] = MyResp{fmt.Sprintf("%d", dts[x]),m.Data[dts[x]].Data}
 	}
 	djson, err := json.Marshal(dstr)
 	if err != nil {
@@ -183,24 +215,21 @@ func alignHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	if path[1] != "localhost" && path[2] != config.Keyspace && path[3] != config.ColumnFamily {
+	m, ok := d[path[1] + "/" + path[2] + "/" + path[3] + "/" + path[4]]
+	if !ok {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	if path[4] != config.Operation {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	dts := make(int64Slice, len(d))
+	dts := make(int64Slice, len(m.Data))
 	count := 0
-	for ts, _ := range d {
+	for ts, _ := range m.Data {
 		dts[count] = ts
 		count++
 	}
 	sort.Sort(dts)
 	dstr := make([]frank.Sample, len(dts))
 	for x := range dts {
-		dstr[x] = frank.Sample{dts[x], d[dts[x]]}
+		dstr[x] = frank.Sample{dts[x], m.Data[dts[x]].Data}
 	}
 	starttime := (time.Now().Unix()/5 - 100)*5
 	endtime   := (time.Now().Unix()/5)*5
@@ -235,8 +264,8 @@ func main() {
 		os.Exit(-1)
 	}
 
-	stream := make(chan []float64)
-	go collector(stream)
+	stream := make(chan frank.NamedSample)
+	go listener(stream)
 	go storer(stream)
 
 	http.HandleFunc("/raw/", rawHandler)

@@ -9,9 +9,14 @@ type Sample struct {
 	Data []float64
 }
 
+type NamedSample struct {
+	Sample
+	Name string
+}
+
 type Meter struct {
 	Name string
-	Data []Sample
+	Data map[int64]Sample
 }
 
 func Align(src []Sample, interval int64, starttime int64, endtime int64) []Sample {
