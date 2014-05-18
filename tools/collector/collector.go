@@ -9,6 +9,7 @@ import (
 	"github.com/cmceniry/golokia"
 	"net"
 	"os"
+	"regexp"
 	"time"
 )
 
@@ -55,10 +56,10 @@ func getHistogram(ks, cf, field string) ([]float64, error) {
 	return ret, nil
 }
 
-func collector(sink chan frank.NamedSample) {
+func collector(keyspace string, columnfamily string, operation string, sink chan frank.NamedSample) {
 	for _ = range time.Tick(5 * time.Second) {
-		if res, err := getHistogram(config.Keyspace, config.ColumnFamily, config.Operation); err != nil {
-			fmt.Printf("Error in collector: %s\n", err)
+		if res, err := getHistogram(keyspace, columnfamily, operation); err != nil {
+			fmt.Printf("Error in collector(%s,%s,%s): %s\n", keyspace, columnfamily, operation, err)
 		} else {
 			name := "localhost/" + config.Keyspace + "/" + config.ColumnFamily + "/" + config.Operation
 			select {
@@ -81,6 +82,7 @@ func forwarder(src chan frank.NamedSample, dst string) {
 		}
 		defer conn.Close()
 		enc := gob.NewEncoder(conn)
+		pointsSent := 0
 		for {
 			err := enc.Encode(<-src)
 			if err != nil {
@@ -88,8 +90,29 @@ func forwarder(src chan frank.NamedSample, dst string) {
 				time.Sleep(5 * time.Second)
 				break
 			}
+			pointsSent += 1
+			if pointsSent % 100 == 0 {
+				fmt.Printf("%d data points sent\n", pointsSent)
+			}
 		}
 	}
+}
+
+func getCFs() [][]string {
+	re := regexp.MustCompile("columnfamily=([a-zA-Z0-9]+),keyspace=([a-zA-Z0-9]+),type=ColumnFamilies")
+
+	ret := [][]string{}
+	beans, err := golokia.ListBeans("http://localhost:7025", "org.apache.cassandra.db")
+	if err != nil {
+		panic(err)
+	}
+	for _, bean := range beans {
+		r := re.FindStringSubmatch(bean)
+		if r != nil {
+			ret = append(ret, []string{r[2], r[1]})
+		}
+	}
+	return ret
 }
 
 func main() {
@@ -113,7 +136,11 @@ func main() {
 	}
 
 	stream := make(chan frank.NamedSample)
-	go collector(stream)
+	cfs := getCFs()
+	for _, cf := range cfs {
+		go collector(cf[0], cf[1], "LifetimeWriteLatencyHistogramMicros", stream)
+		go collector(cf[0], cf[1], "LifetimeReadLatencyHistogramMicros", stream)
+	}
 	go forwarder(stream, config.Destination)
 
 	for {
