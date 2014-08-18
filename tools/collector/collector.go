@@ -30,9 +30,11 @@ var (
 	ErrHistEleConvert  = errors.New("Did not convert element correctly")
 )
 
+var gclient = golokia.NewClient("localhost", "7025")
+
 func getHistogram(ks, cf, field string) ([]float64, error) {
 	bean := fmt.Sprintf("columnfamily=%s,keyspace=%s,type=ColumnFamilies", cf, ks)
-	lrlhm, err := golokia.GetAttr("http://localhost:7025", "org.apache.cassandra.db", bean, field)
+	lrlhm, err := gclient.GetAttr("org.apache.cassandra.db", bean, field)
 	if err != nil {
 		return nil, err
 	}
@@ -56,18 +58,16 @@ func getHistogram(ks, cf, field string) ([]float64, error) {
 	return ret, nil
 }
 
-func collector(keyspace string, columnfamily string, operation string, sink chan frank.NamedSample) {
-	for _ = range time.Tick(5 * time.Second) {
-		if res, err := getHistogram(keyspace, columnfamily, operation); err != nil {
-			fmt.Printf("Error in collector(%s,%s,%s): %s\n", keyspace, columnfamily, operation, err)
-		} else {
-			name := "localhost/" + config.Keyspace + "/" + config.ColumnFamily + "/" + config.Operation
-			select {
-			case sink <- frank.NamedSample{frank.Sample{time.Now().UnixNano()/1e6, res}, name}:
-				// Normal behavior
-			default:
-				// Otherwise, don't do anything with the data since we don't want to block
-			}
+func collect(keyspace string, columnfamily string, operation string, sink chan frank.NamedSample) {
+	if res, err := getHistogram(keyspace, columnfamily, operation); err != nil {
+		fmt.Printf("Error in collector(%s,%s,%s): %s\n", keyspace, columnfamily, operation, err)
+	} else {
+		name := "localhost/" + config.Keyspace + "/" + config.ColumnFamily + "/" + config.Operation
+		select {
+		case sink <- frank.NamedSample{frank.Sample{time.Now().UnixNano()/1e6, res}, name}:
+			// Normal behavior
+		default:
+			// Otherwise, don't do anything with the data since we don't want to block
 		}
 	}
 }
@@ -102,7 +102,7 @@ func getCFs() [][]string {
 	re := regexp.MustCompile("columnfamily=([a-zA-Z0-9]+),keyspace=([a-zA-Z0-9]+),type=ColumnFamilies")
 
 	ret := [][]string{}
-	beans, err := golokia.ListBeans("http://localhost:7025", "org.apache.cassandra.db")
+	beans, err := gclient.ListBeans("org.apache.cassandra.db")
 	if err != nil {
 		panic(err)
 	}
@@ -137,10 +137,14 @@ func main() {
 
 	stream := make(chan frank.NamedSample)
 	cfs := getCFs()
-	for _, cf := range cfs {
-		go collector(cf[0], cf[1], "LifetimeWriteLatencyHistogramMicros", stream)
-		go collector(cf[0], cf[1], "LifetimeReadLatencyHistogramMicros", stream)
-	}
+	go func() {
+		for _ = range time.Tick(5 * time.Second) {
+			for _, cf := range cfs {
+				collect(cf[0], cf[1], "LifetimeWriteLatencyHistogramMicros", stream)
+				collect(cf[0], cf[1], "LifetimeReadLatencyHistogramMicros", stream)
+			}
+		}
+	}()
 	go forwarder(stream, config.Destination)
 
 	for {
