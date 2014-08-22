@@ -62,7 +62,7 @@ func collect(keyspace string, columnfamily string, operation string, sink chan f
 	if res, err := getHistogram(keyspace, columnfamily, operation); err != nil {
 		fmt.Printf("Error in collector(%s,%s,%s): %s\n", keyspace, columnfamily, operation, err)
 	} else {
-		name := "localhost/" + config.Keyspace + "/" + config.ColumnFamily + "/" + config.Operation
+		name := "localhost/" + keyspace + "/" + columnfamily + "/" + operation
 		select {
 		case sink <- frank.NamedSample{frank.Sample{time.Now().UnixNano()/1e6, res}, name}:
 			// Normal behavior

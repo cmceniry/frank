@@ -51,11 +51,9 @@ func getHistogram(ks, cf, field string) ([]float64, error) {
 	}
 	l, ok := lrlhm.([]interface{})
 	if !ok {
-		//fmt.Printf("%v\n", lrlhm)
 		return nil, ErrHistConvert
 	}
 	if len(l) != len(frank.Labels) {
-		//fmt.Printf("%d\n%d\n", len(l), len(frank.Labels))
 		return nil, ErrHistLenMismatch
 	}
 	ret := make([]float64, len(l))
@@ -109,7 +107,6 @@ func listener(sink chan frank.NamedSample) {
 func cleanup(data *frank.Meter, length int) {
 	for {
 		time.Sleep(20 * time.Second)
-		//fmt.Printf("Running cleanup\n")
 		if len(data.Data) > length {
 			keys := make(int64Slice, len(data.Data)+2)
 			count := 0
@@ -118,16 +115,11 @@ func cleanup(data *frank.Meter, length int) {
 				count = count + 1
 			}
 			keys = keys[:count]
-			//fmt.Printf("%s\n", keys)
 			sort.Sort(keys)
-			//fmt.Printf("%s\n", keys)
-			//fmt.Printf("%s\n", len(data))
 			for i := 0; i<len(keys)-length; i++ {
 				delete(data.Data, keys[i])
 			}
-			//fmt.Printf("%s\n", len(data))
 		}
-		//fmt.Printf("-Running cleanup\n")
 	}
 }
 
@@ -138,7 +130,6 @@ var (
 func storer(source chan frank.NamedSample) {
 	for {
 		chunk := <- source
-		fmt.Printf("Received %v\n", chunk)
 		if _, ok := d[chunk.Name]; !ok {
 			d[chunk.Name] = &frank.Meter{chunk.Name, make(map[int64]frank.Sample, 10)}
 			go cleanup(d[chunk.Name], 500)
@@ -147,9 +138,6 @@ func storer(source chan frank.NamedSample) {
 		for k, v := range chunk.Sample.Data {
 			d[chunk.Name].Data[chunk.Sample.TimestampMS].Data[k] = v
 		}
-		for k, v := range d[chunk.Name].Data {
-			fmt.Printf("s: %d %d\n", k, v.Data[10])
-		}
 	}
 }
 
@@ -157,6 +145,16 @@ func printer(source chan frank.NamedSample) {
 	for {
 		data := <- source
 		fmt.Printf("%s : %v\n", time.Unix(data.TimestampMS/1e3, 0).Format("00:00:00"), data.Data)
+	}
+}
+
+func outputer() {
+	for _ = range time.Tick(5 * time.Second) {
+		fmt.Printf("OUTPUT (%d)\n", len(d))
+		for src, _ := range d {
+			fmt.Printf("%s : %d\n", src, len(d[src].Data))
+		}
+		fmt.Printf("\n")
 	}
 }
 
@@ -267,6 +265,7 @@ func main() {
 	stream := make(chan frank.NamedSample)
 	go listener(stream)
 	go storer(stream)
+	go outputer()
 
 	http.HandleFunc("/raw/", rawHandler)
 	http.HandleFunc("/align/", alignHandler)
