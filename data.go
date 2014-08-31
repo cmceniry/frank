@@ -1,8 +1,14 @@
 package frank
 
 import (
+	"sort"
 	_ "fmt"
 )
+
+type int64Slice []int64
+func (p int64Slice) Len() int           { return len(p) }
+func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
+func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 type Sample struct {
 	TimestampMS int64
@@ -17,6 +23,22 @@ type NamedSample struct {
 type Meter struct {
 	Name string
 	Data map[int64]Sample
+}
+
+func (m *Meter) Cleanup(length int) {
+	if len(m.Data) > length {
+		keys := make(int64Slice, len(m.Data)+2)
+		count := 0
+		for k, _ := range m.Data {
+			keys[count] = k
+			count = count + 1
+		}
+		keys = keys[:count]
+		sort.Sort(keys)
+		for i := 0; i<len(keys)-length; i++ {
+			delete(m.Data, keys[i])
+		}
+	}
 }
 
 func Align(src []Sample, interval int64, starttime int64, endtime int64) []Sample {
@@ -116,4 +138,3 @@ func main() {
 	fmt.Println(Diff(Align(data, 5000, 1396208320000, 1396208350000)))
 }
 */
-

@@ -1,10 +1,18 @@
 package frank
 
 import (
+  "time"
   "fmt"
 )
 
+type UtilityConfig struct {
+  BackgroundSleep int
+  BackgroundPause bool
+  SampleThreshold int
+}
+
 type Utility struct {
+  Config UtilityConfig
   Clusters map[string]*utilCluster
 }
 
@@ -17,7 +25,15 @@ type utilNode struct {
 }
 
 func NewUtility() *Utility {
-  return &Utility{make(map[string]*utilCluster)}
+  u := &Utility{
+    UtilityConfig{
+      30,
+      false,
+      500,
+    },
+    make(map[string]*utilCluster),
+  }
+  return u
 }
 
 func (u *Utility) SizeClusters() int {
@@ -93,6 +109,12 @@ func (u *Utility) MeterNames() ([]string) {
 }
 
 func (u *Utility) GetMeter(clustername string, nodename string, cf string, op string) (*Meter, error) {
+  metername := fmt.Sprintf("%s:%s:%s:%s", clustername, nodename, cf, op)
+  m, err := u.getMeter(clustername, nodename, metername)
+  return m, err
+}
+
+func (u *Utility) getMeter(clustername string, nodename string, metername string) (*Meter, error) {
   c, ok := u.Clusters[clustername]
   if !ok {
     return nil, fmt.Errorf("Unable to find cluster %s", clustername)
@@ -101,10 +123,50 @@ func (u *Utility) GetMeter(clustername string, nodename string, cf string, op st
   if !ok {
     return nil, fmt.Errorf("Unable to find node %s:%s", clustername, nodename)
   }
-  mname := fmt.Sprintf("%s:%s:%s:%s", clustername, nodename, cf, op)
-  m, ok := n.Meters[mname]
+  m, ok := n.Meters[metername]
   if !ok {
-    return nil, fmt.Errorf("Unable to find meter %s", mname)
+    return nil, fmt.Errorf("Unable to find meter %s", metername)
   }
   return m, nil
+}
+
+func (u *Utility) AddSample(clustername string, nodename string, cf string, op string, s Sample) (error) {
+  m, err := u.GetMeter(clustername, nodename, cf, op)
+  if err != nil {
+    return err
+  }
+  m.Data[s.TimestampMS] = s
+  return nil
+}
+
+func (u *Utility) CleanupSample(clustername string, nodename string, cf string, op string, length int) (error) {
+  m, err := u.GetMeter(clustername, nodename, cf, op)
+  if err != nil {
+    return err
+  }
+  m.Cleanup(u.Config.SampleThreshold)
+  return nil
+}
+
+func (u *Utility) backgroundCleanup() {
+  for {
+    if !u.Config.BackgroundPause {
+      for _, c := range u.Clusters {
+        for _, n := range c.Nodes {
+          for _, m := range n.Meters {
+            m.Cleanup(u.Config.SampleThreshold)
+          }
+        }
+      }
+    }
+    time.Sleep(time.Duration(u.Config.BackgroundSleep) * time.Second)
+  }
+}
+
+func (u *Utility) StartBackgroundClean() {
+  go u.backgroundCleanup()
+}
+
+func (u *Utility) DeleteMeter(clustername string, nodename string, cf string, op string) {
+
 }
