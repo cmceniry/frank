@@ -41,6 +41,21 @@ func (m *Meter) Cleanup(length int) {
 	}
 }
 
+func (m *Meter) Raw() ([]Sample, error) {
+	dts := make(int64Slice, len(m.Data))
+	count := 0
+	for ts, _ := range m.Data {
+		dts[count] = ts
+		count = count + 1
+	}
+	sort.Sort(dts)
+	ret := make([]Sample, len(dts))
+	for x, ts := range dts {
+		ret[x] = m.Data[ts]
+	}
+	return ret, nil
+}
+
 func Align(src []Sample, interval int64, starttime int64, endtime int64) []Sample {
 	bins := int((endtime-starttime)/interval + 1)
 	ret := make([]Sample, bins)
