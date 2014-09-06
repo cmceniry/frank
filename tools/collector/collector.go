@@ -3,26 +3,14 @@ package main
 import (
 	"encoding/gob"
 	"errors"
-	"flag"
 	"fmt"
 	"github.com/cmceniry/frank"
 	"github.com/cmceniry/golokia"
 	"net"
 	"os"
-	"regexp"
 	"time"
+	"github.com/gocql/gocql"
 )
-
-type MyConfig struct {
-	Host		string
-	Port		int
-	Keyspace	string
-	ColumnFamily	string
-	Operation	string
-	Destination	string
-}
-
-var config = MyConfig{}
 
 var (
 	ErrHistConvert     = errors.New("Did not convert correctly")
@@ -32,6 +20,57 @@ var (
 
 var gclient = golokia.NewClient("localhost", "7025")
 
+type ClusterInfo struct {
+	dst string
+	Name string
+	Nodes []string
+	ColumnFamilies [][2]string
+}
+
+func getClusterInfo(dst string) (*ClusterInfo, error) {
+  ret := &ClusterInfo{dst, "", make([]string, 0), make([][2]string, 0)}
+
+	// Name
+  cluster := gocql.NewCluster(dst)
+	cluster.ProtoVersion = 1
+	cluster.Keyspace = "system"
+	cluster.Consistency = gocql.One
+	session, err := cluster.CreateSession()
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	q  := session.Query("SELECT cluster_name FROM local LIMIT 1")
+	if err != nil {
+		return nil, err
+	}
+	err = q.Scan(&ret.Name)
+	if err != nil {
+	  return nil, err
+	}
+
+  // Skipping host identification for now
+  var res1, res2 string
+  // iter := session.Query("SELECT host_id FROM local").Iter()
+	// for iter.Scan(&res1) {
+	// 	ret.Nodes = append(ret.Nodes, res1)
+	// }
+	// if err := iter.Close(); err != nil {
+	// 	return nil, err
+	// }
+	var iter *gocql.Iter
+
+  iter = session.Query("SELECT keyspace_name, columnfamily_name FROM schema_columnfamilies").Iter()
+	for iter.Scan(&res1, &res2) {
+		ret.ColumnFamilies = append(ret.ColumnFamilies, [2]string{res1, res2})
+	}
+	if err := iter.Close(); err != nil {
+		return nil, err
+	}
+
+	return ret, nil
+}
+
 func getHistogram(ks, cf, field string) ([]float64, error) {
 	bean := fmt.Sprintf("columnfamily=%s,keyspace=%s,type=ColumnFamilies", cf, ks)
 	lrlhm, err := gclient.GetAttr("org.apache.cassandra.db", bean, field)
@@ -40,11 +79,9 @@ func getHistogram(ks, cf, field string) ([]float64, error) {
 	}
 	l, ok := lrlhm.([]interface{})
 	if !ok {
-		//fmt.Printf("%v\n", lrlhm)
 		return nil, ErrHistConvert
 	}
 	if len(l) != len(frank.Labels) {
-		//fmt.Printf("%d\n%d\n", len(l), len(frank.Labels))
 		return nil, ErrHistLenMismatch
 	}
 	ret := make([]float64, len(l))
@@ -58,11 +95,11 @@ func getHistogram(ks, cf, field string) ([]float64, error) {
 	return ret, nil
 }
 
-func collect(keyspace string, columnfamily string, operation string, sink chan frank.NamedSample) {
+func collect(ci *ClusterInfo, keyspace string, columnfamily string, operation string, sink chan frank.NamedSample) {
 	if res, err := getHistogram(keyspace, columnfamily, operation); err != nil {
 		fmt.Printf("Error in collector(%s,%s,%s): %s\n", keyspace, columnfamily, operation, err)
 	} else {
-		name := "localhost/" + keyspace + "/" + columnfamily + "/" + operation
+		name := ci.Name + ":" + keyspace + ":" + columnfamily + ":" + operation
 		select {
 		case sink <- frank.NamedSample{frank.Sample{time.Now().UnixNano()/1e6, res}, name}:
 			// Normal behavior
@@ -72,7 +109,7 @@ func collect(keyspace string, columnfamily string, operation string, sink chan f
 	}
 }
 
-func forwarder(src chan frank.NamedSample, dst string) {
+func forward(src chan frank.NamedSample, dst string) {
 	for {
 		conn, err := net.Dial("tcp", dst)
 		if err != nil {
@@ -98,54 +135,29 @@ func forwarder(src chan frank.NamedSample, dst string) {
 	}
 }
 
-func getCFs() [][]string {
-	re := regexp.MustCompile("columnfamily=([a-zA-Z0-9]+),keyspace=([a-zA-Z0-9]+),type=ColumnFamilies")
-
-	ret := [][]string{}
-	beans, err := gclient.ListBeans("org.apache.cassandra.db")
-	if err != nil {
-		panic(err)
-	}
-	for _, bean := range beans {
-		r := re.FindStringSubmatch(bean)
-		if r != nil {
-			ret = append(ret, []string{r[2], r[1]})
-		}
-	}
-	return ret
-}
-
 func main() {
-	var op string
-	flag.StringVar(&config.Host, "host", "localhost", "Jolokia Host to connect to")
-	flag.IntVar(&config.Port, "port", 7025, "Jolokia Port to connect to")
-	flag.StringVar(&config.Keyspace, "keyspace", "Keyspace1", "Keyspace to connect to")
-	flag.StringVar(&config.ColumnFamily, "cf", "Standard1", "ColumnFamily to get metrics for")
-	flag.StringVar(&op, "op", "Write", "Type of operation to get metrics for: Read or Write")
-	flag.StringVar(&config.Destination, "destination", "127.0.0.1:4271", "TCP IP:Port to forward results to")
-	flag.Parse()
+  if len(os.Args) != 3 {
+    fmt.Fprintf(os.Stderr, "Invalid command line : must specify target node (ip/name), and central (ip/name:port)")
+    os.Exit(-1)
+  }
+	target := os.Args[1]
+	central := os.Args[2]
 
-	switch op {
-	case "Write":
-		config.Operation = "LifetimeWriteLatencyHistogramMicros"
-	case "Read":
-		config.Operation = "LifetimeReadLatencyHistogramMicros"
-	default:
-		fmt.Println("Operation must be Read or Write")
-		os.Exit(-1)
+	ci, err := getClusterInfo(target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to get cluster info : %s\n", err)
 	}
 
 	stream := make(chan frank.NamedSample)
-	cfs := getCFs()
 	go func() {
 		for _ = range time.Tick(5 * time.Second) {
-			for _, cf := range cfs {
-				collect(cf[0], cf[1], "LifetimeWriteLatencyHistogramMicros", stream)
-				collect(cf[0], cf[1], "LifetimeReadLatencyHistogramMicros", stream)
+			for _, cf := range ci.ColumnFamilies {
+				collect(ci, cf[0], cf[1], "LifetimeWriteLatencyHistogramMicros", stream)
+				collect(ci, cf[0], cf[1], "LifetimeReadLatencyHistogramMicros", stream)
 			}
 		}
 	}()
-	go forwarder(stream, config.Destination)
+	go forward(stream, central)
 
 	for {
 		time.Sleep(100 * time.Second)
