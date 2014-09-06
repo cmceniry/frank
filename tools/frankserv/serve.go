@@ -11,6 +11,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"github.com/gorilla/mux"
+	"github.com/gorilla/handlers"
+	"os"
 )
 
 type MyResp struct {
@@ -95,21 +98,10 @@ func (f *frankserver) PrintIncoming() {
 }
 
 func (f *frankserver) rawHandler(w http.ResponseWriter, r *http.Request) {
-	path := strings.Split(r.URL.Path,"/")[1:]
-	if len(path) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	if path[0] != "raw" {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	if len(path) < 4 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	m, err := f.U.GetMeter(path[1], path[2], path[3], path[4])
+	vars := mux.Vars(r)
+	m, err := f.U.GetMeter(vars["cluster"], vars["keyspace"], vars["cf"], vars["op"])
 	if err != nil {
+		fmt.Printf("%v\n", f.U.ClusterNames())
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -129,20 +121,8 @@ func (f *frankserver) rawHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *frankserver) alignHandler(w http.ResponseWriter, r *http.Request) {
-	path := strings.Split(r.URL.Path, "/")[1:]
-	if len(path) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	if path[0] != "align" {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	if len(path) < 4 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	m, err := f.U.GetMeter(path[1], path[2], path[3], path[4])
+	vars := mux.Vars(r)
+	m, err := f.U.GetMeter(vars["cluster"], vars["keyspace"], vars["cf"], vars["op"])
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -175,13 +155,20 @@ func main() {
 	go f.Store()
 	go f.PrintIncoming()
 
-	http.HandleFunc("/raw/", f.rawHandler)
-	http.HandleFunc("/align/", f.alignHandler)
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	r := mux.NewRouter()
+	r.HandleFunc("/raw/{cluster}/{keyspace}/{cf}/{op}", f.rawHandler)
+	r.HandleFunc("/align/{cluster}/{keyspace}/{cf}/{op}", f.alignHandler)
+	r.PathPrefix("/test").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusFound)
+		fmt.Fprintf(w, "Welcome to the home page!\n")
+		return
+	})
+	r.PathPrefix("/static").Handler(http.StripPrefix("/static", http.FileServer(http.Dir("static"))))
+	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/static/play.html", http.StatusFound)
 		return
 	})
+	http.Handle("/", handlers.LoggingHandler(os.Stdout, r))
 	http.ListenAndServe(":4270", nil)
 
 	for {
