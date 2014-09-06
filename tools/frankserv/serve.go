@@ -22,6 +22,7 @@ type frankserver struct {
 	U *frank.Utility
 	Storer chan frank.NamedSample
 	Printer chan frank.NamedSample
+	Print bool
 }
 
 var (
@@ -87,7 +88,9 @@ func (f *frankserver) Store() {
 func (f *frankserver) PrintIncoming() {
 	for {
 		chunk := <- f.Printer
-		fmt.Printf("%s : %v\n", time.Unix(chunk.TimestampMS/1e3, 0).Format("00:00:00"), chunk.Data)
+		if f.Print {
+			fmt.Printf("%s : %v\n", time.Unix(chunk.TimestampMS/1e3, 0).Format("00:00:00"), chunk.Data)
+		}
 	}
 }
 
@@ -165,6 +168,7 @@ func main() {
 		frank.NewUtility(),
 		make(chan frank.NamedSample),
 		make(chan frank.NamedSample),
+		false,
 	}
 
 	go f.CollectorListen()
