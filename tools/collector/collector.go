@@ -99,7 +99,7 @@ func collect(ci *ClusterInfo, keyspace string, columnfamily string, operation st
 	if res, err := getHistogram(keyspace, columnfamily, operation); err != nil {
 		fmt.Printf("Error in collector(%s,%s,%s): %s\n", keyspace, columnfamily, operation, err)
 	} else {
-		name := ci.Name + ":" + keyspace + ":" + columnfamily + ":" + operation
+		name := ci.Name + ":" + ci.dst + ":" + keyspace + "." + columnfamily + ":" + operation
 		select {
 		case sink <- frank.NamedSample{frank.Sample{time.Now().UnixNano()/1e6, res}, name}:
 			// Normal behavior
