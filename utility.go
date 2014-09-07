@@ -86,9 +86,9 @@ func (u *Utility) ClusterNames() ([]string) {
   return ret
 }
 
-func (u *Utility) NodeNames() ([]string) {
+func (u *Utility) NodeNames(clustername string) ([]string) {
   ret := make([]string, 0)
-  for _, c := range u.Clusters {
+  if c, ok := u.Clusters[clustername]; ok {
     for nname, _ := range c.Nodes {
       ret = append(ret, nname)
     }

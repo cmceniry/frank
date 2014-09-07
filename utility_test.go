@@ -28,8 +28,8 @@ func TestUtilityNewMeter(t *testing.T) {
   if u.ClusterNames()[0] != "TestCluster" {
     t.Errorf("Invalid Cluster Names : %s, should be [\"TestCluster\"]", u.ClusterNames())
   }
-  if u.NodeNames()[0] != "localhost" {
-    t.Errorf("Invalid Node Names : %s, should be [\"localhost\"]", u.NodeNames())
+  if u.NodeNames("TestCluster")[0] != "localhost" {
+    t.Errorf("Invalid Node Names : %s, should be [\"localhost\"]", u.NodeNames("TestCluster"))
   }
   if u.MeterNames()[0] != mname {
     t.Errorf("Invalid Meter Names : %s, should be [\"%s\"]", u.MeterNames(), mname)
