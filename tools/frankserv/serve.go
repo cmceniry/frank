@@ -142,6 +142,35 @@ func (f *frankserver) alignHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(djson)
 }
 
+func (f *frankserver) listClusters(w http.ResponseWriter, r *http.Request) {
+	c := f.U.ClusterNames()
+	cjson, err := json.Marshal(c)
+	if err != nil {
+		log.Printf("Unable to marshal: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(cjson)
+}
+
+func (f *frankserver) showCluster(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	ci := make(map[string][]string)
+	ci["name"] = []string{vars["cluster"]}
+	ci["nodes"] = f.U.NodeNames(vars["cluster"])
+	ci["columnfamilies"] = f.U.CFNames(vars["cluster"])
+	cijson, err := json.Marshal(ci)
+	if err != nil {
+		log.Printf("Unable to marshal: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(cijson)
+	return
+}
+
 func main() {
 
   f := frankserver{
@@ -163,6 +192,8 @@ func main() {
 		fmt.Fprintf(w, "Welcome to the home page!\n")
 		return
 	})
+	r.HandleFunc("/clusters", f.listClusters)
+	r.HandleFunc("/clusters/{cluster}", f.showCluster)
 	r.PathPrefix("/static").Handler(http.StripPrefix("/static", http.FileServer(http.Dir("static"))))
 	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/static/play.html", http.StatusFound)
