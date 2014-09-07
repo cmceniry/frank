@@ -14,8 +14,8 @@ func TestNewUtility(t *testing.T) {
 
 func TestUtilityNewMeter(t *testing.T) {
   u := NewUtility()
-  mname := "TestCluster:localhost:Test1:ReadHistory"
-  m, err := u.NewMeter("TestCluster", "localhost", "Test1", "ReadHistory")
+  mname := "TestCluster:localhost:Space1.Test1:ReadHistory"
+  m, err := u.NewMeter("TestCluster", "localhost", "Space1.Test1", "ReadHistory")
   if err != nil {
     t.Errorf("NewMeter produced error: %s", err)
   }
@@ -30,6 +30,9 @@ func TestUtilityNewMeter(t *testing.T) {
   }
   if u.NodeNames("TestCluster")[0] != "localhost" {
     t.Errorf("Invalid Node Names : %s, should be [\"localhost\"]", u.NodeNames("TestCluster"))
+  }
+  if u.CFNames("TestCluster")[0] != "Space1.Test1" {
+    t.Errorf("Invalid CF Names : %s, should be [\"Space1.Test1\"]", u.CFNames("TestCluster"))
   }
   if u.MeterNames()[0] != mname {
     t.Errorf("Invalid Meter Names : %s, should be [\"%s\"]", u.MeterNames(), mname)

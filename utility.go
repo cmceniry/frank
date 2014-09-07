@@ -3,6 +3,7 @@ package frank
 import (
   "time"
   "fmt"
+  "strings"
 )
 
 type UtilityConfig struct {
@@ -91,6 +92,30 @@ func (u *Utility) NodeNames(clustername string) ([]string) {
   if c, ok := u.Clusters[clustername]; ok {
     for nname, _ := range c.Nodes {
       ret = append(ret, nname)
+    }
+  }
+  return ret
+}
+
+func (u *Utility) CFNames(clustername string) ([]string) {
+  ret := make([]string, 0)
+  if c, ok := u.Clusters[clustername]; ok {
+    for _, n := range c.Nodes {
+      for mname, _ := range n.Meters {
+        msplit := strings.Split(mname, ":")
+        if len(msplit) == 4 {
+          cf := msplit[2]
+          found := false
+          for _, v := range ret {
+            if v == cf {
+              found = true
+            }
+          }
+          if !found {
+            ret = append(ret, cf)
+          }
+        }
+      }
     }
   }
   return ret
