@@ -4,12 +4,16 @@ import (
   "time"
   "fmt"
   "strings"
+  "os"
+  "encoding/gob"
 )
 
 type UtilityConfig struct {
   BackgroundSleep int
   BackgroundPause bool
+  BackgroundRunning bool
   SampleThreshold int
+  SaveFile string
 }
 
 type Utility struct {
@@ -30,7 +34,9 @@ func NewUtility() *Utility {
     UtilityConfig{
       30,
       false,
+      false,
       500,
+      "/tmp/frank.sav",
     },
     make(map[string]*utilCluster),
   }
@@ -175,7 +181,8 @@ func (u *Utility) CleanupSample(clustername string, nodename string, cf string, 
 
 func (u *Utility) backgroundCleanup() {
   for {
-    if !u.Config.BackgroundPause {
+    if !u.Config.BackgroundPause && !u.Config.BackgroundRunning {
+      u.Config.BackgroundRunning = true
       for _, c := range u.Clusters {
         for _, n := range c.Nodes {
           for _, m := range n.Meters {
@@ -183,6 +190,7 @@ func (u *Utility) backgroundCleanup() {
           }
         }
       }
+      u.Config.BackgroundRunning = false
     }
     time.Sleep(time.Duration(u.Config.BackgroundSleep) * time.Second)
   }
@@ -194,4 +202,43 @@ func (u *Utility) StartBackgroundClean() {
 
 func (u *Utility) DeleteMeter(clustername string, nodename string, cf string, op string) {
 
+}
+
+func (u *Utility) Load() (error) {
+  fi, err := os.Open(u.Config.SaveFile)
+  if err != nil {
+    return err
+  }
+  defer fi.Close()
+  dec := gob.NewDecoder(fi)
+  var m Meter
+  for {
+    err := dec.Decode(&m)
+    if err != nil {
+      break
+    }
+    names := strings.Split(m.Name, ":")
+    u.NewMeter(names[0], names[1], names[2], names[3])
+    for _, s := range m.Data {
+      u.AddSample(names[0], names[1], names[2], names[3], s)
+    }
+  }
+  return nil
+}
+
+func (u *Utility) Save() (error) {
+  fi, err := os.Create(u.Config.SaveFile)
+  if err != nil {
+    return err
+  }
+  defer fi.Close()
+  enc := gob.NewEncoder(fi)
+  for _, c := range u.Clusters {
+    for _, n := range c.Nodes {
+      for _, m := range n.Meters {
+        enc.Encode(m)
+      }
+    }
+  }
+  return nil
 }

@@ -53,3 +53,31 @@ func TestUtilityGetMeter(t *testing.T) {
     t.Errorf("NewMeter and GetMeter differ : %p versus %p", m, mneedle)
   }
 }
+
+func TestUtilitySaveLoad(t * testing.T) {
+  u1 := NewUtility()
+  _, _ = u1.NewMeter("Test Cluster", "localhost", "system.Test1", "WriteLatency")
+  s1 := Sample{1410000000000, []float64{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}}
+  s2 := Sample{1420000000000, []float64{101.0, 102.0, 103.0, 104.0, 105.0, 106.0}}
+  u1.AddSample("Test Cluster", "localhost", "system.Test1", "WriteLatency", s1)
+  u1.AddSample("Test Cluster", "localhost", "system.Test1", "WriteLatency", s2)
+  if err := u1.Save(); err != nil {
+    t.Errorf("Save Error: %s", err)
+    return
+  }
+  u2 := NewUtility()
+  u2.Load()
+  m, err := u2.GetMeter("Test Cluster", "localhost", "system.Test1", "WriteLatency")
+  if err != nil {
+    t.Errorf("Meter not found after Load")
+    return
+  }
+  if val, ok := m.Data[1410000000000]; !ok {
+    t.Errorf("Sample not found after Load")
+    return
+  } else {
+    if val.Data[0] != 1.0 {
+      t.Errorf("Sample not equal after Load")
+    }
+  }
+}
