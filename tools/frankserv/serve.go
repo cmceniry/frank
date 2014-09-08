@@ -179,10 +179,18 @@ func main() {
 		make(chan frank.NamedSample),
 		false,
 	}
+	f.U.Load()
 
 	go f.CollectorListen()
 	go f.Store()
 	go f.PrintIncoming()
+	go func(){
+		for _ = range time.Tick(30 * time.Second) {
+			fmt.Printf("Save\n")
+			f.U.Save()
+			fmt.Printf("Done\n")
+		}
+	}()
 
 	r := mux.NewRouter()
 	r.HandleFunc("/raw/{cluster}/{keyspace}/{cf}/{op}", f.rawHandler)
