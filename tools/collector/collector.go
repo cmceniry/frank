@@ -18,7 +18,7 @@ var (
 	ErrHistEleConvert  = errors.New("Did not convert element correctly")
 )
 
-var gclient = golokia.NewClient("localhost", "7025")
+var gclient *golokia.Client
 
 type ClusterInfo struct {
 	dst string
@@ -142,6 +142,7 @@ func main() {
   }
 	target := os.Args[1]
 	central := os.Args[2]
+	gclient = golokia.NewClient(os.Args[1], "7025")
 
 	ci, err := getClusterInfo(target)
 	if err != nil {
